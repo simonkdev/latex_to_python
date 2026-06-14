@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LaTeX to Python Translator</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>LaTeX to Python Translator</h1>
+        <p>Enter a LaTeX mathematical expression below to convert it to Python code.</p>
+        
+        <form id="convert-form">
+            <div class="textarea-group">
+                <label for="latex-input">LaTeX Expression</label>
+                <textarea 
+                    id="latex-input" 
+                    name="latex" 
+                    placeholder="e.g., \\frac{x+1}{x-1} or \\sin(x) + \\cos(y)"
+                    required
+                ></textarea>
+            </div>
+            
+            <div class="controls">
+                <div class="select-group">
+                    <label for="mode-select">Output Mode</label>
+                    <select id="mode-select" name="mode">
+                        <option value="function">Function</option>
+                        <option value="expression">Expression</option>
+                        <option value="script">Script</option>
+                    </select>
+                </div>
+                
+                <div class="select-group">
+                    <label for="func-name">Function Name</label>
+                    <select id="func-name" name="func_name">
+                        <option value="f">f</option>
+                        <option value="compute">compute</option>
+                        <option value="result">result</option>
+                        <option value="calculate">calculate</option>
+                    </select>
+                </div>
+
+                <div class="select-group">
+                    <label for="backend-select">Backend</label>
+                    <select id="backend-select" name="backend">
+                        <option value="python">Python</option>
+                        <option value="numpy">NumPy</option>
+                        <option value="sympy">SymPy</option>
+                    </select>
+                </div>
+                
+                <button type="submit" class="btn" id="convert-btn">Convert</button>
+            </div>
+        </form>
+        
+        <div id="result-section" style="display: none;">
+            <div id="variables" class="variables"></div>
+            <div class="code-output">
+                <button class="copy-btn" onclick="copyToClipboard(event)">Copy</button>
+                <pre id="python-output"></pre>
+            </div>
+        </div>
+        
+        <div id="error-section" class="error" style="display: none;"></div>
+    </div>
+    
+    <script>
+        async function convertLaTeX(event) {
+            event.preventDefault();
+            
+            const form = event.target;
+            const formData = new FormData(form);
+            const data = Object.fromEntries(formData);
+            
+            const convertBtn = document.getElementById('convert-btn');
+            const resultSection = document.getElementById('result-section');
+            const errorSection = document.getElementById('error-section');
+            
+            convertBtn.disabled = true;
+            convertBtn.textContent = 'Converting...';
+            
+            resultSection.style.display = 'none';
+            errorSection.style.display = 'none';
+            
+            try {
+                const response = await fetch('/api/v1/convert', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(data),
+                });
+                
+                const result = await response.json();
+                
+                if (result.error) {
+                    errorSection.textContent = result.error || 'Conversion failed';
+                    errorSection.style.display = 'block';
+                } else {
+                    document.getElementById('python-output').textContent = result.python;
+                    
+                    if (result.variables && result.variables.length > 0) {
+                        document.getElementById('variables').textContent = 
+                            'Variables: ' + result.variables.join(', ');
+                    } else {
+                        document.getElementById('variables').textContent = '';
+                    }
+                    
+                    resultSection.style.display = 'block';
+                }
+            } catch (error) {
+                errorSection.textContent = 'Network error: ' + error.message;
+                errorSection.style.display = 'block';
+            } finally {
+                convertBtn.disabled = false;
+                convertBtn.textContent = 'Convert';
+            }
+        }
+        
+        function copyToClipboard(event) {
+            const code = document.getElementById('python-output').textContent;
+            navigator.clipboard.writeText(code).then(() => {
+                const btn = event.target;
+                btn.textContent = 'Copied!';
+                setTimeout(() => {
+                    btn.textContent = 'Copy';
+                }, 2000);
+            });
+        }
+        
+        document.getElementById('convert-form').addEventListener('submit', convertLaTeX);
+        
+        // Add some example LaTeX expressions
+        const examples = [
+            '\\frac{x+1}{x-1}',
+            '\\sin(x)^2 + \\cos(x)^2',
+            '\\sum_{i=1}^{n} i^2',
+            '\\sqrt{x^2 + y^2}',
+            '\\frac{-b + \\sqrt{b^2 - 4ac}}{2a}',
+        ];
+        
+        // Pre-fill with first example
+        document.getElementById('latex-input').value = examples[0];
+    </script>
+</body>
+</html>
