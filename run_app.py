@@ -1,11 +1,17 @@
-"""Start the local API and browser frontend."""
+"""Start the local API and browser frontend, compatible with both local and Vercel execution."""
 
 from __future__ import annotations
 
 import argparse
+import os
 
 import uvicorn
+from fastapi import FastAPI
+from mangum import Mangum
+from api.main import app
 
+# Vercel requires a handler for serverless execution
+handler = Mangum(app)
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the local translator app.")
@@ -25,7 +31,6 @@ def main() -> None:
         port=args.port,
         reload=not args.no_reload,
     )
-
 
 if __name__ == "__main__":
     main()
