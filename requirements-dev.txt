@@ -8,3 +8,4 @@ uvicorn[standard]==0.49.0
 pytest==9.1.0
 ruff==0.15.17
 black==26.5.1
+mangum

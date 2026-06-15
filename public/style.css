@@ -81,9 +81,9 @@ p {
 }
 
 h1 {
-    max-width: 1780px;
-    font-size: 4px;
-    line-height: 0.5;
+    max-width: 780px;
+    font-size: 34px;
+    line-height: 2;
     letter-spacing: 0;
 }
 

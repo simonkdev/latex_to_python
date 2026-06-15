@@ -4,3 +4,5 @@ sympy==1.14.0
 latex2sympy2==1.9.1
 numpy==2.3.5
 mangum
+uvicorn
+python-multipart
