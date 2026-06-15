@@ -28,6 +28,8 @@ app = FastAPI(
     redoc_url="/redoc" if ENABLE_DOCS else None,
 )
 
+app.mount("/static", StaticFiles(directory=str(PROJECT_ROOT / "static")), name="static")
+
 templates = Jinja2Templates(directory=str(PROJECT_ROOT / "templates"))
 # app.mount("/public", StaticFiles(directory=str(PROJECT_ROOT / "public")), name="public")
 
@@ -53,5 +55,3 @@ async def root(request: Request) -> HTMLResponse:
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy"}
-
-app.mount("/static", StaticFiles(directory=str(PROJECT_ROOT / "static")), name="static")
