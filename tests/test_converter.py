@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 import main as cli_main
+import run_app
 from api.main import app
 from api.routes import _convert_cached, convert_latex
 from api.schemas import ConvertRequest, ConvertResponse
@@ -108,6 +109,36 @@ class TestParserModule:
     def test_parse_latex_matrix(self):
         result = parse_latex(r"\begin{bmatrix}1 & 2 \\ 3 & 4\end{bmatrix}")
         assert result == sp.Matrix([[1, 2], [3, 4]])
+
+    @pytest.mark.parametrize(
+        "latex",
+        [
+            r"\begin{matrix}1 & x \\ y & 4\end{matrix}",
+            r"\begin{pmatrix}1 & x \\ y & 4\end{pmatrix}",
+            r"\begin{Bmatrix}1 & x \\ y & 4\end{Bmatrix}",
+            r"\begin{smallmatrix}1 & x \\ y & 4\end{smallmatrix}",
+            r"\begin{array}{cc}1 & x \\ y & 4\end{array}",
+        ],
+    )
+    def test_parse_latex_begin_end_matrix_environments(self, latex):
+        x, y = sp.symbols("x y")
+        assert parse_latex(latex) == sp.Matrix([[1, x], [y, 4]])
+
+    @pytest.mark.parametrize(
+        "latex",
+        [
+            r"\begin{vmatrix}1 & 2 \\ 3 & 4\end{vmatrix}",
+            r"\begin{Vmatrix}1 & 2 \\ 3 & 4\end{Vmatrix}",
+            r"\det\begin{pmatrix}1 & 2 \\ 3 & 4\end{pmatrix}",
+        ],
+    )
+    def test_parse_latex_begin_end_determinants(self, latex):
+        assert parse_latex(latex) == -2
+
+    def test_parse_latex_rejects_ragged_matrix_environment(self):
+        result = parse_latex_detailed(r"\begin{bmatrix}1 & 2 \\ 3\end{bmatrix}")
+        assert result.expression is None
+        assert result.error_code == "UNSUPPORTED_EXPRESSION"
 
     def test_parse_latex_determinant(self):
         result = parse_latex(r"\det\begin{bmatrix}1 & 2 \\ 3 & 4\end{bmatrix}")
@@ -318,6 +349,14 @@ class TestGeneratorModule:
         assert "import math" in code
         assert eval_expression_code(code, **values) == pytest.approx(expected)
 
+    def test_generate_sqrt_expression_imports_math(self):
+        x, y = sp.symbols("x y")
+        code = generate_python(sp.sqrt(x**2 + y**2), mode="function")
+        assert "import math" in code
+        namespace = {}
+        exec(code, namespace)
+        assert namespace["f"](3, 4) == 5
+
     def test_generate_numpy_sigmoid_executes(self):
         z = sp.Symbol("z")
         expr = 1 / (1 + sp.exp(-z))
@@ -337,8 +376,56 @@ class TestGeneratorModule:
         code = generate_python(
             sp.Matrix([[1, 2], [3, 4]]), mode="expression", backend="numpy"
         )
+        assert "np.array" in code
         result = eval_expression_code(code)
         assert np.array_equal(result, np.array([[1, 2], [3, 4]]))
+
+    def test_generate_sympy_matrix_uses_sympy_backend(self):
+        code = generate_python(
+            sp.Matrix([[1, 2], [3, 4]]), mode="expression", backend="sympy"
+        )
+        assert code == "import sympy as sp\n\nsp.Matrix([[1, 2], [3, 4]])"
+        result = eval_expression_code(code)
+        assert result == sp.Matrix([[1, 2], [3, 4]])
+
+    def test_generate_numpy_vector_add_uses_numpy_operation(self):
+        x, y = sp.symbols("x y")
+        code = generate_python(
+            x + y,
+            mode="expression",
+            backend="numpy",
+            var_types={"x": "vector", "y": "vector"},
+        )
+        assert "np.add(" in code
+        result = eval_expression_code(code, x=np.array([1, 2]), y=np.array([3, 4]))
+        assert np.array_equal(result, np.array([4, 6]))
+
+    def test_generate_numpy_matrix_multiply_uses_matmul(self):
+        a, x = sp.symbols("A x")
+        code = generate_python(
+            a * x,
+            mode="expression",
+            backend="numpy",
+            var_types={"A": "matrix", "x": "vector"},
+        )
+        assert "np.matmul(" in code
+        result = eval_expression_code(
+            code,
+            A=np.array([[1, 2], [3, 4]]),
+            x=np.array([5, 6]),
+        )
+        assert np.array_equal(result, np.array([17, 39]))
+
+    def test_generate_numpy_vector_product_uses_dot(self):
+        x, y = sp.symbols("x y")
+        code = generate_python(
+            x * y,
+            mode="expression",
+            backend="numpy",
+            var_types={"x": "vector", "y": "vector"},
+        )
+        assert "np.dot(" in code
+        assert eval_expression_code(code, x=np.array([1, 2]), y=np.array([3, 4])) == 11
 
     def test_generate_numpy_norm_executes(self):
         expr = parse_latex(r"\left\|x\right\|_2^2")
@@ -435,6 +522,17 @@ class TestGeneratorModule:
         )
         assert "def f(input_value):" in code
 
+    def test_generate_function_with_variable_type_hints(self):
+        x, y = sp.symbols("x y")
+        code = generate_python(
+            x + y,
+            mode="function",
+            backend="numpy",
+            var_types={"x": "vector", "y": "matrix"},
+        )
+        assert "import numpy as np" in code
+        assert "def f(x: np.ndarray, y: np.ndarray):" in code
+
     def test_generate_rejects_sanitized_name_collisions(self):
         expr = sp.Symbol("a-b") + sp.Symbol("a_b")
         with pytest.raises(generator.GenerationError) as exc_info:
@@ -484,14 +582,22 @@ class TestSchemas:
         assert request.mode == "function"
         assert request.func_name == "f"
         assert request.backend == "python"
+        assert request.variable_types == {}
 
     def test_convert_request_rejects_invalid_mode(self):
         with pytest.raises(ValidationError):
             ConvertRequest(latex="x", mode="bad")  # type: ignore[arg-type]
 
+        with pytest.raises(ValidationError):
+            ConvertRequest(latex="x", mode="script")  # type: ignore[arg-type]
+
     def test_convert_request_rejects_invalid_backend(self):
         with pytest.raises(ValidationError):
             ConvertRequest(latex="x", backend="bad")  # type: ignore[arg-type]
+
+    def test_convert_request_rejects_invalid_variable_type(self):
+        with pytest.raises(ValidationError):
+            ConvertRequest(latex="x", variable_types={"x": "tensor"})  # type: ignore[dict-item]
 
     def test_convert_request_rejects_oversized_latex(self):
         with pytest.raises(ValidationError):
@@ -506,6 +612,7 @@ class TestSchemas:
         assert response.support_level == "computed"
         assert response.backend == "python"
         assert response.required_imports == []
+        assert response.variable_types == {}
 
 
 class TestRoutesAndAPI:
@@ -542,6 +649,22 @@ class TestRoutesAndAPI:
         assert response.status_code == 200
         assert "LaTeX to Python Translator" in response.text
         assert 'id="latex-input"' in response.text
+        assert 'id="variable-types"' in response.text
+        assert 'value="script"' not in response.text
+        assert "highlightPython" in response.text
+        assert 'data-example="\\\\frac' not in response.text
+        assert 'data-example="\\frac{x+1}{x-1}"' in response.text
+        assert (
+            'data-example="\\begin{bmatrix}1 &amp; 2 \\\\ 3 &amp; 4\\end{bmatrix}"'
+            in response.text
+        )
+        assert "&#039;" not in response.text
+
+    def test_static_css_uses_dark_color_scheme(self):
+        response = client.get("/static/style.css")
+        assert response.status_code == 200
+        assert "color-scheme: dark" in response.text
+        assert "--bg: #070b12" in response.text
 
     def test_static_css_served(self):
         response = client.get("/static/style.css")
@@ -553,7 +676,7 @@ class TestRoutesAndAPI:
         assert response.status_code == 200
         assert response.json() == {"status": "healthy"}
 
-    @pytest.mark.parametrize("mode", ["expression", "function", "script"])
+    @pytest.mark.parametrize("mode", ["expression", "function"])
     def test_convert_endpoint_modes(self, mode):
         response = client.post(
             "/api/v1/convert",
@@ -585,6 +708,59 @@ class TestRoutesAndAPI:
         assert payload["backend"] == "numpy"
         assert payload["required_imports"] == ["import numpy as np"]
 
+    def test_convert_endpoint_variable_types(self):
+        response = client.post(
+            "/api/v1/convert",
+            json={
+                "latex": "x + y",
+                "mode": "function",
+                "backend": "numpy",
+                "variable_types": {"x": "vector", "y": "matrix"},
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["error"] is None
+        assert payload["variable_types"] == {"x": "vector", "y": "matrix"}
+        assert "np.add(" in payload["python"]
+        assert "def f(x: np.ndarray, y: np.ndarray):" in payload["python"]
+
+    def test_convert_endpoint_matrix_backend_changes_output(self):
+        response = client.post(
+            "/api/v1/convert",
+            json={
+                "latex": r"\begin{bmatrix}1 & 2 \\ 3 & 4\end{bmatrix}",
+                "mode": "expression",
+                "backend": "numpy",
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["error"] is None
+        assert "np.array([[1, 2], [3, 4]])" in payload["python"]
+
+    def test_convert_endpoint_examples_do_not_collapse_to_symbolic_hashes(self):
+        examples = [
+            r"\frac{x+1}{x-1}",
+            r"\begin{bmatrix}1 & 2 \\ 3 & 4\end{bmatrix}",
+            r"\sin(x)^2 + \cos(x)^2",
+            r"\sum_{i=1}^{n} i^2",
+            r"\sqrt{x^2 + y^2}",
+        ]
+        outputs = []
+        for latex in examples:
+            response = client.post(
+                "/api/v1/convert",
+                json={"latex": latex, "mode": "function", "backend": "python"},
+            )
+            assert response.status_code == 200
+            payload = response.json()
+            assert payload["error"] is None
+            assert "__latex_symbolic" not in payload["python"]
+            assert "latex_expr_" not in payload["python"]
+            outputs.append(payload["python"])
+        assert len(set(outputs)) == len(outputs)
+
     def test_convert_endpoint_parse_error(self):
         response = client.post(
             "/api/v1/convert",
@@ -610,6 +786,7 @@ class TestRoutesAndAPI:
                     "support_level": "unsupported",
                     "backend": "python",
                     "required_imports": [],
+                    "variable_types": {},
                 },
             ),
             (
@@ -674,6 +851,9 @@ class TestModuleImports:
 
     def test_root_main_exports_fastapi_app(self):
         assert cli_main.app is app
+
+    def test_run_app_module_importable(self):
+        assert callable(run_app.main)
 
     def test_package_modules_importable(self):
         import api

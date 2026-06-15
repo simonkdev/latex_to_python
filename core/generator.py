@@ -40,6 +40,7 @@ def generate_python(
     backend: OutputBackend = "python",
     func_name: str = "f",
     var_names: dict[str, str] | None = None,
+    var_types: dict[str, str] | None = None,
 ) -> str:
     """Generate Python code for a SymPy expression."""
     if not _is_identifier(func_name):
@@ -50,31 +51,48 @@ def generate_python(
 
     variables = _ordered_variables(expr)
     python_names = build_symbol_map(expr, var_names)
-    expression = _expression_to_fragment(expr, python_names, backend)
+    expression = _expression_to_fragment(expr, python_names, backend, var_types or {})
+    type_imports = _type_imports(var_types or {}, backend)
+    imports = tuple(sorted(set(expression.imports).union(type_imports)))
 
     if mode == "expression":
         return _with_imports(expression.code, expression.imports)
 
     if mode == "function":
         function_code = _function_code(
-            func_name, variables, python_names, expression.code
+            func_name,
+            variables,
+            python_names,
+            expression.code,
+            var_types or {},
+            backend,
         )
-        return _with_imports(function_code, expression.imports)
+        return _with_imports(function_code, imports)
 
     if mode == "script":
-        script_code = _script_code(func_name, variables, python_names, expression.code)
-        return _with_imports(script_code, expression.imports)
+        script_code = _script_code(
+            func_name,
+            variables,
+            python_names,
+            expression.code,
+            var_types or {},
+            backend,
+        )
+        return _with_imports(script_code, imports)
 
     raise ValueError(f"Unknown mode: {mode}")
 
 
 def _expression_to_fragment(
-    expr: sp.Expr, python_names: dict[str, str], backend: OutputBackend
+    expr: sp.Expr,
+    python_names: dict[str, str],
+    backend: OutputBackend,
+    var_types: dict[str, str] | None = None,
 ) -> GeneratedExpression:
     if backend == "python":
         return _sympy_to_python_fragment(expr, python_names)
     if backend == "numpy":
-        return _sympy_to_numpy_fragment(expr, python_names)
+        return _sympy_to_numpy_fragment(expr, python_names, var_types or {})
     if backend == "sympy":
         renamed = expr.xreplace(
             {
@@ -82,6 +100,11 @@ def _expression_to_fragment(
                 for symbol in expr.free_symbols
             }
         )
+        if isinstance(renamed, MatrixBase):
+            return GeneratedExpression(
+                code=f"sp.Matrix({renamed.tolist()!r})",
+                imports=("import sympy as sp",),
+            )
         return GeneratedExpression(
             code=f"sp.sympify({str(renamed)!r})",
             imports=("import sympy as sp",),
@@ -130,30 +153,39 @@ def _sympy_to_python_fragment(
 
 
 def _sympy_to_numpy(expr: sp.Expr, python_names: dict[str, str]) -> str:
-    return _sympy_to_numpy_fragment(expr, python_names).code
+    return _sympy_to_numpy_fragment(expr, python_names, {}).code
 
 
 def _sympy_to_numpy_fragment(
-    expr: sp.Expr, python_names: dict[str, str]
+    expr: sp.Expr, python_names: dict[str, str], var_types: dict[str, str]
 ) -> GeneratedExpression:
     replacements = {
         symbol: sp.Symbol(python_names[str(symbol)]) for symbol in expr.free_symbols
     }
     converted = expr.xreplace(replacements)
+    typed_names = {
+        python_names[source_name]: var_type
+        for source_name, var_type in var_types.items()
+        if source_name in python_names
+    }
 
     if isinstance(converted, MatrixBase):
-        rows = [
-            "["
-            + ", ".join(
-                _sympy_to_numpy_fragment(cell, python_names).code for cell in row
-            )
-            + "]"
-            for row in converted.tolist()
-        ]
+        imports = {"import numpy as np"}
+        rows = []
+        for row in converted.tolist():
+            cells = [
+                _sympy_to_numpy_fragment(cell, python_names, var_types) for cell in row
+            ]
+            imports.update(import_ for cell in cells for import_ in cell.imports)
+            rows.append("[" + ", ".join(cell.code for cell in cells) + "]")
         return GeneratedExpression(
             "np.array([" + ", ".join(rows) + "])",
-            ("import numpy as np",),
+            tuple(sorted(imports)),
         )
+
+    array_operation = _numpy_array_operation(converted, python_names, var_types)
+    if array_operation is not None:
+        return array_operation
 
     special_operation = _special_operation_to_numpy(converted, python_names)
     if special_operation is not None:
@@ -184,6 +216,11 @@ def _imports_for_pycode(expr: sp.Expr) -> tuple[str, ...]:
     imports = set()
     if expr.has(sp.Sum):
         imports.add("import builtins")
+    if any(
+        isinstance(power, sp.Pow) and power.exp == sp.Rational(1, 2)
+        for power in sp.preorder_traversal(expr)
+    ):
+        imports.add("import math")
     math_objects = (
         sp.Abs,
         sp.acos,
@@ -250,6 +287,9 @@ def _safe_doit(expr: sp.Expr) -> sp.Expr:
 def _special_operation_to_python(
     expr: sp.Expr, python_names: dict[str, str]
 ) -> str | None:
+    if expr.is_Function and str(expr.func) == "__latex_symbolic":
+        return f"sp.sympify({str(expr)!r})"
+
     if not expr.is_Function or len(expr.args) != 2:
         if (
             expr.is_Function
@@ -286,7 +326,7 @@ def _special_operation_to_numpy(
     expr: sp.Expr, python_names: dict[str, str]
 ) -> str | None:
     if expr.is_Function and str(expr.func) == "__latex_norm" and len(expr.args) == 3:
-        inner = _sympy_to_numpy(expr.args[0], python_names)
+        inner = _sympy_to_numpy_fragment(expr.args[0], python_names, {}).code
         order = expr.args[1]
         power = expr.args[2]
         code = f"np.linalg.norm({inner}, ord={int(order)})"
@@ -296,13 +336,141 @@ def _special_operation_to_numpy(
     return _special_operation_to_python(expr, python_names)
 
 
+def _numpy_array_operation(
+    expr: sp.Expr, python_names: dict[str, str], var_types: dict[str, str]
+) -> GeneratedExpression | None:
+    typed_names = {
+        python_names[source_name]: var_type
+        for source_name, var_type in var_types.items()
+        if source_name in python_names
+    }
+    if not _has_array_typed_symbol(expr, typed_names):
+        return None
+
+    if expr.is_Symbol:
+        return GeneratedExpression(str(expr))
+
+    if isinstance(expr, sp.Add):
+        args = [
+            _sympy_to_numpy_fragment(arg, python_names, var_types) for arg in expr.args
+        ]
+        imports = {"import numpy as np"}
+        imports.update(import_ for arg in args for import_ in arg.imports)
+        if len(args) == 2:
+            return GeneratedExpression(
+                f"np.add({args[0].code}, {args[1].code})",
+                tuple(sorted(imports)),
+            )
+        return GeneratedExpression(
+            "np.add.reduce([" + ", ".join(arg.code for arg in args) + "])",
+            tuple(sorted(imports)),
+        )
+
+    if isinstance(expr, sp.Mul):
+        scalar_args = []
+        array_args = []
+        for arg in expr.args:
+            if _has_array_typed_symbol(arg, typed_names):
+                array_args.append(
+                    _sympy_to_numpy_fragment(arg, python_names, var_types)
+                )
+            else:
+                scalar_args.append(
+                    _sympy_to_numpy_fragment(arg, python_names, var_types)
+                )
+
+        imports = {"import numpy as np"}
+        imports.update(
+            import_ for arg in scalar_args + array_args for import_ in arg.imports
+        )
+        if not array_args:
+            return None
+
+        if len(array_args) == 1:
+            array_code = array_args[0].code
+        else:
+            array_code = _numpy_product_code(array_args, expr, typed_names)
+
+        for scalar in scalar_args:
+            array_code = f"np.multiply({scalar.code}, {array_code})"
+
+        return GeneratedExpression(array_code, tuple(sorted(imports)))
+
+    if isinstance(expr, sp.Pow):
+        base, exponent = expr.args
+        if not _has_array_typed_symbol(base, typed_names):
+            return None
+        base_fragment = _sympy_to_numpy_fragment(base, python_names, var_types)
+        exponent_fragment = _sympy_to_numpy_fragment(exponent, python_names, var_types)
+        imports = {
+            "import numpy as np",
+            *base_fragment.imports,
+            *exponent_fragment.imports,
+        }
+        if _expr_type(base, typed_names) == "matrix" and exponent.is_integer:
+            return GeneratedExpression(
+                f"np.linalg.matrix_power({base_fragment.code}, {exponent_fragment.code})",
+                tuple(sorted(imports)),
+            )
+        return GeneratedExpression(
+            f"np.power({base_fragment.code}, {exponent_fragment.code})",
+            tuple(sorted(imports)),
+        )
+
+    return None
+
+
+def _numpy_product_code(
+    fragments: list[GeneratedExpression], expr: sp.Expr, typed_names: dict[str, str]
+) -> str:
+    array_types = [
+        _expr_type(arg, typed_names)
+        for arg in expr.args
+        if _has_array_typed_symbol(arg, typed_names)
+    ]
+    if all(array_type == "vector" for array_type in array_types):
+        code = f"np.dot({fragments[0].code}, {fragments[1].code})"
+    else:
+        code = f"np.matmul({fragments[0].code}, {fragments[1].code})"
+    for fragment in fragments[2:]:
+        code = f"np.matmul({code}, {fragment.code})"
+    return code
+
+
+def _has_array_typed_symbol(expr: sp.Expr, typed_names: dict[str, str]) -> bool:
+    return any(
+        typed_names.get(str(symbol)) in {"list", "vector", "matrix"}
+        for symbol in expr.free_symbols
+    )
+
+
+def _expr_type(expr: sp.Expr, typed_names: dict[str, str]) -> str:
+    types = {
+        typed_names.get(str(symbol), "scalar")
+        for symbol in expr.free_symbols
+        if typed_names.get(str(symbol), "scalar") != "scalar"
+    }
+    if "matrix" in types:
+        return "matrix"
+    if "vector" in types:
+        return "vector"
+    if "list" in types:
+        return "list"
+    return "scalar"
+
+
 def _function_code(
     func_name: str,
     variables: list[sp.Symbol],
     python_names: dict[str, str],
     python_expr: str,
+    var_types: dict[str, str] | None = None,
+    backend: OutputBackend = "python",
 ) -> str:
-    params = ", ".join(python_names[str(symbol)] for symbol in variables)
+    params = ", ".join(
+        _parameter_code(symbol, python_names, var_types or {}, backend)
+        for symbol in variables
+    )
     return f"def {func_name}({params}):\n    return {python_expr}"
 
 
@@ -311,8 +479,12 @@ def _script_code(
     variables: list[sp.Symbol],
     python_names: dict[str, str],
     python_expr: str,
+    var_types: dict[str, str] | None = None,
+    backend: OutputBackend = "python",
 ) -> str:
-    function_code = _function_code(func_name, variables, python_names, python_expr)
+    function_code = _function_code(
+        func_name, variables, python_names, python_expr, var_types or {}, backend
+    )
     lines = [
         function_code,
         "",
@@ -336,6 +508,43 @@ def _script_code(
         ]
     )
     return "\n".join(lines)
+
+
+def _parameter_code(
+    symbol: sp.Symbol,
+    python_names: dict[str, str],
+    var_types: dict[str, str],
+    backend: OutputBackend,
+) -> str:
+    name = python_names[str(symbol)]
+    annotation = _type_annotation(var_types.get(str(symbol), "scalar"), backend)
+    if annotation is None:
+        return name
+    return f"{name}: {annotation}"
+
+
+def _type_annotation(var_type: str, backend: OutputBackend) -> str | None:
+    if var_type == "scalar":
+        return None
+    if var_type == "set":
+        return "set"
+    if backend == "numpy" and var_type in {"vector", "matrix"}:
+        return "np.ndarray"
+    if backend == "sympy" and var_type == "matrix":
+        return "sp.Matrix"
+    if var_type in {"list", "vector", "matrix"}:
+        return "list"
+    return None
+
+
+def _type_imports(var_types: dict[str, str], backend: OutputBackend) -> tuple[str, ...]:
+    selected = set(var_types.values())
+    imports = set()
+    if backend == "numpy" and selected.intersection({"vector", "matrix"}):
+        imports.add("import numpy as np")
+    if backend == "sympy" and "matrix" in selected:
+        imports.add("import sympy as sp")
+    return tuple(sorted(imports))
 
 
 def _with_imports(code: str, imports: tuple[str, ...] | None = None) -> str:

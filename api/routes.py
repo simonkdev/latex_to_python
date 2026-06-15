@@ -31,6 +31,7 @@ async def convert_latex(request: ConvertRequest) -> ConvertResponse:
         request.mode,
         request.func_name,
         request.backend,
+        tuple(sorted(request.variable_types.items())),
     )
     return response.model_copy(deep=True)
 
@@ -41,8 +42,10 @@ def _convert_cached(
     mode: str,
     func_name: str,
     backend: str,
+    variable_type_items: tuple[tuple[str, str], ...] = (),
 ) -> ConvertResponse:
     """Convert a validated request tuple and cache deterministic results."""
+    variable_types = dict(variable_type_items)
     try:
         # Parse LaTeX to SymPy expression
         parse_result = parse_latex_detailed(latex)
@@ -56,6 +59,7 @@ def _convert_cached(
                 error_code=parse_result.error_code or "INVALID_LATEX",
                 support_level="unsupported",
                 backend=backend,
+                variable_types=variable_types,
             )
 
         # Get variables from expression
@@ -69,6 +73,7 @@ def _convert_cached(
                 mode=mode,
                 backend=backend,
                 func_name=func_name,
+                var_types=variable_types,
             )
         except GenerationError as e:
             logger.info("Generation rejected: %s", e.message)
@@ -79,6 +84,7 @@ def _convert_cached(
                 error_code=e.code,
                 support_level="unsupported",
                 backend=backend,
+                variable_types=variable_types,
             )
 
         support_level = "symbolic" if "sp.sympify(" in python_code else "computed"
@@ -89,6 +95,10 @@ def _convert_cached(
             support_level=support_level,
             backend=backend,
             required_imports=_extract_required_imports(python_code),
+            variable_types={
+                variable: variable_types.get(variable, "scalar")
+                for variable in variables
+            },
         )
 
     except Exception as e:

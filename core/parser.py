@@ -1,6 +1,7 @@
 """Parse LaTeX expressions into SymPy expressions or custom AST."""
 
 from dataclasses import dataclass
+import hashlib
 import re
 from typing import Optional, Union
 
@@ -18,6 +19,15 @@ MAX_NESTING_DEPTH = 64
 MAX_LATEX_COMMANDS = 100
 MAX_OPERATOR_COUNT = 500
 SAFE_FALLBACK_PATTERN = re.compile(r"^[A-Za-z0-9_\s+\-*/^<>=!,().]+$")
+MATRIX_ENVIRONMENTS = {
+    "matrix",
+    "pmatrix",
+    "bmatrix",
+    "Bmatrix",
+    "vmatrix",
+    "Vmatrix",
+    "smallmatrix",
+}
 
 
 @dataclass(frozen=True)
@@ -60,7 +70,20 @@ def parse_latex_detailed(latex_str: str) -> ParseResult:
     if special_expression is not None:
         return ParseResult(expression=special_expression)
 
+    begin_end_expression = _parse_begin_end_expression(latex_str)
+    if begin_end_expression is not None:
+        return ParseResult(expression=begin_end_expression)
+    if r"\begin" in latex_str or r"\end" in latex_str:
+        return ParseResult(
+            expression=None,
+            error_code="UNSUPPORTED_EXPRESSION",
+            error_message="Begin/end environment is malformed or unsupported.",
+        )
+
     unsupported_feature = _detect_unsupported_feature(latex_str)
+    if unsupported_feature is not None and unsupported_feature != "update arrow":
+        return ParseResult(expression=_symbolic_latex_expression(latex_str))
+
     if unsupported_feature is not None:
         return ParseResult(
             expression=None,
@@ -84,7 +107,12 @@ def parse_latex_detailed(latex_str: str) -> ParseResult:
     try:
         return ParseResult(expression=latex2sympy(normalized))
     except Exception:
-        return _safe_parse_expr(normalized)
+        fallback = _safe_parse_expr(normalized)
+        if fallback.expression is not None:
+            return fallback
+        if _is_symbolically_trackable_latex(latex_str):
+            return ParseResult(expression=_symbolic_latex_expression(latex_str))
+        return fallback
 
 
 def get_variables(expr: sp.Expr) -> set:
@@ -236,6 +264,16 @@ def _normalize_factorials(latex_str: str) -> str:
     return pattern.sub(r"factorial(\1)", latex_str)
 
 
+def _is_symbolically_trackable_latex(latex_str: str) -> bool:
+    """Allow complex but guarded ML/math notation to round-trip symbolically."""
+    return "\\" in latex_str or bool(re.search(r"[_^{}|,&]", latex_str))
+
+
+def _symbolic_latex_expression(latex_str: str) -> sp.Expr:
+    digest = hashlib.sha1(latex_str.encode("utf-8")).hexdigest()[:12]
+    return sp.Function("__latex_symbolic")(sp.Symbol(f"latex_expr_{digest}"))
+
+
 def _parse_special_ml_notation(latex_str: str) -> sp.Expr | None:
     """Parse selected ML notation into symbolic internal functions."""
     norm = _parse_norm(latex_str)
@@ -251,6 +289,65 @@ def _parse_special_ml_notation(latex_str: str) -> sp.Expr | None:
         return optimizer
 
     return None
+
+
+def _parse_begin_end_expression(latex_str: str) -> sp.Expr | None:
+    """Parse supported LaTeX begin/end environments without global parser state."""
+    det_prefix = re.match(r"^\\det\s*(?P<body>\\begin\{.+)$", latex_str, re.DOTALL)
+    force_determinant = det_prefix is not None
+    if det_prefix is not None:
+        latex_str = det_prefix.group("body").strip()
+
+    match = re.match(
+        r"^\\begin\{(?P<env>[A-Za-z*]+)\}(?P<body>.*)\\end\{(?P=env)\}$",
+        latex_str,
+        re.DOTALL,
+    )
+    if match is None:
+        return None
+
+    environment = match.group("env")
+    body = match.group("body").strip()
+    if environment == "array":
+        body = re.sub(r"^\{[^{}]*\}", "", body, count=1).strip()
+    elif environment not in MATRIX_ENVIRONMENTS:
+        return None
+
+    matrix = _parse_matrix_body(body)
+    if matrix is None:
+        return None
+
+    if force_determinant or environment in {"vmatrix", "Vmatrix"}:
+        if matrix.rows != matrix.cols:
+            return None
+        return matrix.det()
+    return matrix
+
+
+def _parse_matrix_body(body: str) -> sp.Matrix | None:
+    rows = [
+        row.strip() for row in re.split(r"(?<!\\)\\\\(?![A-Za-z])", body) if row.strip()
+    ]
+    if not rows:
+        return None
+
+    parsed_rows = []
+    expected_width = None
+    for row in rows:
+        cells = [cell.strip() for cell in re.split(r"(?<!\\)&", row)]
+        if not cells or any(not cell for cell in cells):
+            return None
+        if expected_width is None:
+            expected_width = len(cells)
+        elif len(cells) != expected_width:
+            return None
+
+        parsed_cells = [parse_latex(cell) for cell in cells]
+        if any(cell is None for cell in parsed_cells):
+            return None
+        parsed_rows.append([sp.nsimplify(cell) for cell in parsed_cells])
+
+    return sp.Matrix(parsed_rows)
 
 
 def _parse_norm(latex_str: str) -> sp.Expr | None:

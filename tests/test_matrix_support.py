@@ -33,7 +33,9 @@ def test_matrix_with_fractions():
 
 def test_matrix_3x3():
     """Test 3x3 matrix."""
-    result = parse_latex(r"\begin{bmatrix}1 & 2 & 3 \\ 4 & 5 & 6 \\ 7 & 8 & 9\end{bmatrix}")
+    result = parse_latex(
+        r"\begin{bmatrix}1 & 2 & 3 \\ 4 & 5 & 6 \\ 7 & 8 & 9\end{bmatrix}"
+    )
     expected = sp.Matrix([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
     assert result == expected
 

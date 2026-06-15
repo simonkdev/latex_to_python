@@ -1,148 +1,394 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LaTeX to Python Translator</title>
-    <link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-    <div class="container">
-        <h1>LaTeX to Python Translator</h1>
-        <p>Enter a LaTeX mathematical expression below to convert it to Python code.</p>
-        
-        <form id="convert-form">
-            <div class="textarea-group">
-                <label for="latex-input">LaTeX Expression</label>
-                <textarea 
-                    id="latex-input" 
-                    name="latex" 
-                    placeholder="e.g., \\frac{x+1}{x-1} or \\sin(x) + \\cos(y)"
-                    required
-                ></textarea>
-            </div>
-            
-            <div class="controls">
-                <div class="select-group">
-                    <label for="mode-select">Output Mode</label>
-                    <select id="mode-select" name="mode">
-                        <option value="function">Function</option>
-                        <option value="expression">Expression</option>
-                        <option value="script">Script</option>
-                    </select>
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>LaTeX to Python Translator</title>
+        <link rel="stylesheet" href="/static/style.css" />
+    </head>
+    <body>
+        <main class="app-shell">
+            <header class="topbar">
+                <div>
+                    <div class="eyebrow">Made by simonkdev</div>
+                    <h1>Math to Python Translator</h1>
                 </div>
-                
-                <div class="select-group">
-                    <label for="func-name">Function Name</label>
-                    <select id="func-name" name="func_name">
-                        <option value="f">f</option>
-                        <option value="compute">compute</option>
-                        <option value="result">result</option>
-                        <option value="calculate">calculate</option>
-                    </select>
-                </div>
+                <div class="status-pill" id="status-pill">Ready</div>
+            </header>
 
-                <div class="select-group">
-                    <label for="backend-select">Backend</label>
-                    <select id="backend-select" name="backend">
-                        <option value="python">Python</option>
-                        <option value="numpy">NumPy</option>
-                        <option value="sympy">SymPy</option>
-                    </select>
-                </div>
-                
-                <button type="submit" class="btn" id="convert-btn">Convert</button>
-            </div>
-        </form>
-        
-        <div id="result-section" style="display: none;">
-            <div id="variables" class="variables"></div>
-            <div class="code-output">
-                <button class="copy-btn" onclick="copyToClipboard(event)">Copy</button>
-                <pre id="python-output"></pre>
-            </div>
-        </div>
-        
-        <div id="error-section" class="error" style="display: none;"></div>
-    </div>
-    
-    <script>
-        async function convertLaTeX(event) {
-            event.preventDefault();
-            
-            const form = event.target;
-            const formData = new FormData(form);
-            const data = Object.fromEntries(formData);
-            
-            const convertBtn = document.getElementById('convert-btn');
-            const resultSection = document.getElementById('result-section');
-            const errorSection = document.getElementById('error-section');
-            
-            convertBtn.disabled = true;
-            convertBtn.textContent = 'Converting...';
-            
-            resultSection.style.display = 'none';
-            errorSection.style.display = 'none';
-            
-            try {
-                const response = await fetch('/api/v1/convert', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(data),
-                });
-                
-                const result = await response.json();
-                
-                if (result.error) {
-                    errorSection.textContent = result.error || 'Conversion failed';
-                    errorSection.style.display = 'block';
-                } else {
-                    document.getElementById('python-output').textContent = result.python;
-                    
-                    if (result.variables && result.variables.length > 0) {
-                        document.getElementById('variables').textContent = 
-                            'Variables: ' + result.variables.join(', ');
-                    } else {
-                        document.getElementById('variables').textContent = '';
+            <form id="convert-form" class="workspace">
+                <section class="panel editor-panel">
+                    <div class="panel-header">
+                        <div>
+                            <h2>LaTeX Input</h2>
+                            <p>
+                                Paste an equation, matrix, optimization
+                                objective, or ML expression.
+                            </p>
+                        </div>
+                        <button
+                            type="submit"
+                            class="primary-btn"
+                            id="convert-btn"
+                        >
+                            Convert
+                        </button>
+                    </div>
+
+                    <label class="sr-only" for="latex-input"
+                        >LaTeX Expression</label
+                    >
+                    <textarea
+                        id="latex-input"
+                        name="latex"
+                        placeholder="\\frac{x+1}{x-1}"
+                        spellcheck="false"
+                        required
+                    ></textarea>
+
+                    <div class="toolbar">
+                        <label class="control">
+                            <span>Output</span>
+                            <select id="mode-select" name="mode">
+                                <option value="function">Function</option>
+                                <option value="expression">Expression</option>
+                            </select>
+                        </label>
+
+                        <label class="control">
+                            <span>Function</span>
+                            <select id="func-name" name="func_name">
+                                <option value="f">f</option>
+                                <option value="compute">compute</option>
+                                <option value="result">result</option>
+                                <option value="calculate">calculate</option>
+                            </select>
+                        </label>
+
+                        <label class="control">
+                            <span>Backend</span>
+                            <select id="backend-select" name="backend">
+                                <option value="python">Python</option>
+                                <option value="numpy">NumPy</option>
+                                <option value="sympy">SymPy</option>
+                            </select>
+                        </label>
+                    </div>
+
+                    <div class="examples" aria-label="Example expressions">
+                        <button type="button" data-example="\frac{x+1}{x-1}">
+                            Fraction
+                        </button>
+                        <button
+                            type="button"
+                            data-example="\begin{bmatrix}1 &amp; 2 \\ 3 &amp; 4\end{bmatrix}"
+                        >
+                            Matrix
+                        </button>
+                        <button
+                            type="button"
+                            data-example="\left\|x\right\|_2^2"
+                        >
+                            Norm
+                        </button>
+                        <button type="button" data-example="\arg\min_{x} x^2">
+                            Argmin
+                        </button>
+                    </div>
+                </section>
+
+                <section class="panel output-panel">
+                    <div class="panel-header">
+                        <div>
+                            <h2>Python Output</h2>
+                            <p id="output-subtitle">
+                                Generated code appears here.
+                            </p>
+                        </div>
+                        <button type="button" class="ghost-btn" id="copy-btn">
+                            Copy
+                        </button>
+                    </div>
+
+                    <div
+                        id="error-section"
+                        class="error"
+                        style="display: none"
+                    ></div>
+
+                    <div
+                        id="result-section"
+                        class="result-stack"
+                        style="display: none"
+                    >
+                        <div class="meta-row">
+                            <div id="variables" class="meta-card"></div>
+                            <div id="imports" class="meta-card"></div>
+                        </div>
+
+                        <div
+                            id="variable-types"
+                            class="variable-types"
+                            style="display: none"
+                        >
+                            <div class="variable-types-title">
+                                Variable Types
+                            </div>
+                            <div
+                                id="variable-type-grid"
+                                class="variable-type-grid"
+                            ></div>
+                        </div>
+
+                        <pre
+                            class="code-output"
+                        ><code id="python-output" class="language-python"></code></pre>
+                    </div>
+
+                    <div id="empty-state" class="empty-state">
+                        <div class="empty-mark">π</div>
+                        <p>Choose a backend and convert a LaTeX expression.</p>
+                    </div>
+                </section>
+            </form>
+        </main>
+
+        <script>
+            const selectedVariableTypes = {};
+            const variableTypeOptions = [
+                ["scalar", "Scalar"],
+                ["list", "List"],
+                ["vector", "Vector"],
+                ["matrix", "Matrix"],
+                ["set", "Set"],
+            ];
+
+            const examples = [
+                "\\frac{x+1}{x-1}",
+                "\\begin{bmatrix}1 & 2 \\\\ 3 & 4\\end{bmatrix}",
+                "\\sin(x)^2 + \\cos(x)^2",
+                "\\sum_{i=1}^{n} i^2",
+                "\\sqrt{x^2 + y^2}",
+                "\\frac{-b + \\sqrt{b^2 - 4ac}}{2a}",
+            ];
+
+            async function convertLaTeX(event) {
+                event.preventDefault();
+
+                const form = event.target;
+                const formData = new FormData(form);
+                const data = Object.fromEntries(formData);
+                data.variable_types = selectedVariableTypes;
+
+                const convertBtn = document.getElementById("convert-btn");
+                const resultSection = document.getElementById("result-section");
+                const errorSection = document.getElementById("error-section");
+                const emptyState = document.getElementById("empty-state");
+                const statusPill = document.getElementById("status-pill");
+
+                convertBtn.disabled = true;
+                convertBtn.textContent = "Converting";
+                statusPill.textContent = "Working";
+                statusPill.className = "status-pill is-working";
+
+                resultSection.style.display = "none";
+                errorSection.style.display = "none";
+                emptyState.style.display = "none";
+
+                try {
+                    const response = await fetch("/api/v1/convert", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(data),
+                    });
+
+                    const result = await response.json();
+
+                    if (result.error) {
+                        errorSection.textContent =
+                            result.error || "Conversion failed";
+                        errorSection.style.display = "block";
+                        statusPill.textContent = result.error_code || "Error";
+                        statusPill.className = "status-pill is-error";
+                        return;
                     }
-                    
-                    resultSection.style.display = 'block';
+
+                    document.getElementById("python-output").innerHTML =
+                        highlightPython(result.python);
+                    document.getElementById("output-subtitle").textContent =
+                        `${result.backend} backend · ${result.support_level} output`;
+
+                    renderMetadata(result);
+                    renderVariableTypes(
+                        result.variables || [],
+                        result.variable_types || {},
+                    );
+
+                    resultSection.style.display = "flex";
+                    statusPill.textContent =
+                        result.support_level || "Converted";
+                    statusPill.className = "status-pill";
+                } catch (error) {
+                    errorSection.textContent =
+                        "Network error: " + error.message;
+                    errorSection.style.display = "block";
+                    statusPill.textContent = "Network error";
+                    statusPill.className = "status-pill is-error";
+                } finally {
+                    convertBtn.disabled = false;
+                    convertBtn.textContent = "Convert";
                 }
-            } catch (error) {
-                errorSection.textContent = 'Network error: ' + error.message;
-                errorSection.style.display = 'block';
-            } finally {
-                convertBtn.disabled = false;
-                convertBtn.textContent = 'Convert';
             }
-        }
-        
-        function copyToClipboard(event) {
-            const code = document.getElementById('python-output').textContent;
-            navigator.clipboard.writeText(code).then(() => {
-                const btn = event.target;
-                btn.textContent = 'Copied!';
-                setTimeout(() => {
-                    btn.textContent = 'Copy';
-                }, 2000);
+
+            function renderMetadata(result) {
+                const variables =
+                    result.variables && result.variables.length > 0
+                        ? result.variables.join(", ")
+                        : "None";
+                const imports =
+                    result.required_imports &&
+                    result.required_imports.length > 0
+                        ? result.required_imports.join(", ")
+                        : "None";
+                document.getElementById("variables").innerHTML =
+                    `<span>Variables</span><strong>${escapeHtml(variables)}</strong>`;
+                document.getElementById("imports").innerHTML =
+                    `<span>Imports</span><strong>${escapeHtml(imports)}</strong>`;
+            }
+
+            function renderVariableTypes(variables, returnedTypes) {
+                const section = document.getElementById("variable-types");
+                const grid = document.getElementById("variable-type-grid");
+                grid.innerHTML = "";
+
+                if (!variables || variables.length === 0) {
+                    section.style.display = "none";
+                    return;
+                }
+
+                for (const variable of variables) {
+                    selectedVariableTypes[variable] =
+                        returnedTypes[variable] ||
+                        selectedVariableTypes[variable] ||
+                        "scalar";
+
+                    const row = document.createElement("label");
+                    row.className = "variable-type-row";
+
+                    const name = document.createElement("span");
+                    name.className = "variable-name";
+                    name.textContent = variable;
+
+                    const select = document.createElement("select");
+                    select.name = `variable_type_${variable}`;
+                    select.dataset.variable = variable;
+
+                    for (const [value, label] of variableTypeOptions) {
+                        const option = document.createElement("option");
+                        option.value = value;
+                        option.textContent = label;
+                        option.selected =
+                            selectedVariableTypes[variable] === value;
+                        select.appendChild(option);
+                    }
+
+                    select.addEventListener("change", () => {
+                        selectedVariableTypes[variable] = select.value;
+                        if (
+                            document.getElementById("result-section").style
+                                .display !== "none"
+                        ) {
+                            document
+                                .getElementById("convert-form")
+                                .requestSubmit();
+                        }
+                    });
+
+                    row.appendChild(name);
+                    row.appendChild(select);
+                    grid.appendChild(row);
+                }
+
+                for (const variable of Object.keys(selectedVariableTypes)) {
+                    if (!variables.includes(variable)) {
+                        delete selectedVariableTypes[variable];
+                    }
+                }
+
+                section.style.display = "block";
+            }
+
+            function highlightPython(code) {
+                const pattern =
+                    /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|(\b(?:import|from|def|return|if|else|for|in|as|print|lambda|None|True|False)\b)|(\b(?:math|np|sp|builtins)\b)(?=\.)|(\b\d+(?:\.\d+)?\b)|([+\-*/%=<>!]+|\bnp\.[A-Za-z_]\w*|\bsp\.[A-Za-z_]\w*|\bmath\.[A-Za-z_]\w*)/g;
+                let highlighted = "";
+                let lastIndex = 0;
+
+                for (const match of code.matchAll(pattern)) {
+                    highlighted += escapeHtml(
+                        code.slice(lastIndex, match.index),
+                    );
+                    const [
+                        token,
+                        stringToken,
+                        keyword,
+                        namespace,
+                        numberToken,
+                        operator,
+                    ] = match;
+                    if (stringToken)
+                        highlighted += `<span class="tok-string">${escapeHtml(token)}</span>`;
+                    else if (keyword)
+                        highlighted += `<span class="tok-keyword">${escapeHtml(token)}</span>`;
+                    else if (namespace)
+                        highlighted += `<span class="tok-namespace">${escapeHtml(token)}</span>`;
+                    else if (numberToken)
+                        highlighted += `<span class="tok-number">${escapeHtml(token)}</span>`;
+                    else if (operator)
+                        highlighted += `<span class="tok-operator">${escapeHtml(token)}</span>`;
+                    else highlighted += escapeHtml(token);
+                    lastIndex = match.index + token.length;
+                }
+
+                highlighted += escapeHtml(code.slice(lastIndex));
+                return highlighted;
+            }
+
+            function escapeHtml(value) {
+                return String(value)
+                    .replaceAll("&", "&amp;")
+                    .replaceAll("<", "&lt;")
+                    .replaceAll(">", "&gt;")
+                    .replaceAll('"', "&quot;");
+            }
+
+            function copyToClipboard() {
+                const code =
+                    document.getElementById("python-output").textContent;
+                navigator.clipboard.writeText(code).then(() => {
+                    const btn = document.getElementById("copy-btn");
+                    btn.textContent = "Copied";
+                    setTimeout(() => {
+                        btn.textContent = "Copy";
+                    }, 1500);
+                });
+            }
+
+            document
+                .getElementById("convert-form")
+                .addEventListener("submit", convertLaTeX);
+            document
+                .getElementById("copy-btn")
+                .addEventListener("click", copyToClipboard);
+            document.querySelectorAll("[data-example]").forEach((button) => {
+                button.addEventListener("click", () => {
+                    document.getElementById("latex-input").value =
+                        button.dataset.example;
+                    document.getElementById("convert-form").requestSubmit();
+                });
             });
-        }
-        
-        document.getElementById('convert-form').addEventListener('submit', convertLaTeX);
-        
-        // Add some example LaTeX expressions
-        const examples = [
-            '\\frac{x+1}{x-1}',
-            '\\sin(x)^2 + \\cos(x)^2',
-            '\\sum_{i=1}^{n} i^2',
-            '\\sqrt{x^2 + y^2}',
-            '\\frac{-b + \\sqrt{b^2 - 4ac}}{2a}',
-        ];
-        
-        // Pre-fill with first example
-        document.getElementById('latex-input').value = examples[0];
-    </script>
-</body>
+
+            document.getElementById("latex-input").value = examples[0];
+        </script>
+    </body>
 </html>

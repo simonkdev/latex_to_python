@@ -136,6 +136,15 @@ def test_every_ml_expression_has_a_test_classification():
     assert classified == set(ML_EXPRESSIONS)
 
 
+def test_at_least_30_ml_expressions_parse_or_symbolically_round_trip():
+    supported = [
+        case_id
+        for case_id, expression in ML_EXPRESSIONS.items()
+        if parse_latex(rhs(expression)) is not None
+    ]
+    assert len(supported) >= 30
+
+
 @pytest.mark.parametrize("case_id", sorted(NUMERIC_CASES))
 def test_ml_numeric_expression_calculations(case_id):
     values, reference = NUMERIC_CASES[case_id]
