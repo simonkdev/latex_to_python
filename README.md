@@ -1,4 +1,3 @@
-```markdown
 # LaTeX to Python
 
 A web app that converts **LaTeX mathematical expressions** to **executable Python code**. Try it live at [https://dothefancymathforme.vercel.app/](https://dothefancymathforme.vercel.app/)
