@@ -92,4 +92,3 @@ We welcome contributions!
 This project is licensed under the **MIT License**.
 
 Copyright (c) 2026 Simon Korten
-```
