@@ -1,23 +1,10 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "vercel_handler.py",
-      "use": "@vercel/python"
-    }
-  ],
+  "builds": [{ "src": "vercel_handler.py", "use": "@vercel/python" }],
   "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "vercel_handler.py"
-    },
-    {
-      "src": "/health",
-      "dest": "vercel_handler.py"
-    },
-    {
-      "src": "/",
-      "dest": "vercel_handler.py"
-    }
+    { "src": "/static/(.*)", "dest": "vercel_handler.py" },
+    { "src": "/api/(.*)", "dest": "vercel_handler.py" },
+    { "src": "/health", "dest": "vercel_handler.py" },
+    { "src": "/", "dest": "vercel_handler.py" }
   ]
 }
