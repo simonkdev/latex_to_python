@@ -29,7 +29,7 @@ app = FastAPI(
 )
 
 templates = Jinja2Templates(directory=str(PROJECT_ROOT / "templates"))
-app.mount("/public", StaticFiles(directory=str(PROJECT_ROOT / "public")), name="public")
+# app.mount("/public", StaticFiles(directory=str(PROJECT_ROOT / "public")), name="public")
 
 # CORS middleware
 app.add_middleware(

@@ -2,14 +2,14 @@
   "version": 2,
   "builds": [
     {
-      "src": "run_app.py",
+      "src": "vercel_handler.py",
       "use": "@vercel/python"
     }
   ],
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "run_app.py"
+      "dest": "vercel_handler.py"
     }
   ]
 }
