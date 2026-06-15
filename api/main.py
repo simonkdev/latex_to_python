@@ -30,7 +30,6 @@ app = FastAPI(
 
 templates = Jinja2Templates(directory=str(PROJECT_ROOT / "templates"))
 # app.mount("/public", StaticFiles(directory=str(PROJECT_ROOT / "public")), name="public")
-app.mount("/static", StaticFiles(directory=str(PROJECT_ROOT / "static")), name="static")
 
 # CORS middleware
 app.add_middleware(
@@ -54,3 +53,5 @@ async def root(request: Request) -> HTMLResponse:
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy"}
+
+app.mount("/static", StaticFiles(directory=str(PROJECT_ROOT / "static")), name="static")
